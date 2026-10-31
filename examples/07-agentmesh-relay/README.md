@@ -18,19 +18,22 @@ ACL edits, and no DNS propagation wait.
 
 ## Prerequisites
 
-- `a2a` built from this branch (`go build -o ./bin/a2a .`)
+- `a2a` built statically from this branch (`CGO_ENABLED=0 go build -trimpath -o ./bin/a2a .`)
+- Docker running locally (for `opencode` container sandboxes)
 - `agentmesh-one` and `agentmesh-node` on `PATH`
 
-To run the entire lesson automatically with the scripted `fakeacp` harness (no
-Docker or LLM API keys needed):
+To run the entire lesson end-to-end with real Docker-sandboxed `opencode`
+agents and live LLM inference (`opencode/big-pickle` by default, or pass
+`--model <provider/model>` with `OPENROUTER_API_KEY` / `OPENAI_API_KEY` /
+`ANTHROPIC_API_KEY` / `GEMINI_API_KEY` exported):
 
 ```bash
-# Local loopback relay hub:
+# Local loopback relay hub + real Docker opencode agents:
 bash docs/demo/demo-agentmesh.sh \
   --agentmesh-one-bin /path/to/agentmesh-one \
   --agentmesh-node-bin /path/to/agentmesh-node
 
-# End-to-end over a live public HTTPS Cloudflare Quick Tunnel (*.trycloudflare.com):
+# Full internet E2E over a live public HTTPS Cloudflare Quick Tunnel (*.trycloudflare.com):
 bash docs/demo/demo-agentmesh.sh \
   --tunnel cloudflare \
   --agentmesh-one-bin /path/to/agentmesh-one \
