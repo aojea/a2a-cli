@@ -58,12 +58,19 @@ type Config struct {
 // NetworkConfig selects the providers which make the agent reachable beyond
 // localhost.
 type NetworkConfig struct {
-	// Private is tailscale, lan or empty.
+	// Private is tailscale, agentmesh, lan or empty.
 	Private string `yaml:"private,omitempty"`
-	// Public is tailscale, ngrok or empty.
+	// Public is tailscale, agentmesh, ngrok or empty.
 	Public string `yaml:"public,omitempty"`
 
 	TailscaleControlURL string `yaml:"tailscale_control_url,omitempty"`
+	// AgentMeshHubURL is the Agent Mesh control plane URL (such as an agentmesh-one hub).
+	AgentMeshHubURL string `yaml:"agentmesh_hub_url,omitempty"`
+	// AgentMeshIngressAuth selects how public Agent Mesh ingress authenticates callers:
+	// passthrough (default, preserving a2a pairing tokens) or edge (Agent Mesh Biscuit/OIDC).
+	AgentMeshIngressAuth string `yaml:"agentmesh_ingress_auth,omitempty"`
+	// AgentMeshIngressAllow restricts principals or roles in edge ingress mode.
+	AgentMeshIngressAllow []string `yaml:"agentmesh_ingress_allow,omitempty"`
 	// NgrokURL is a reserved ngrok domain, such as https://coder.ngrok.app.
 	NgrokURL string `yaml:"ngrok_url,omitempty"`
 	// LANPort is the port of the LAN listener. Zero picks one on first run.

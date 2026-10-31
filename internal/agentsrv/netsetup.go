@@ -25,14 +25,16 @@ import (
 // Network provider names.
 const (
 	ProviderTailscale = "tailscale"
+	ProviderAgentMesh = "agentmesh"
 	ProviderLAN       = "lan"
 	ProviderNgrok     = "ngrok"
 )
 
 // Secrets read by network providers.
 const (
-	SecretTailscaleAuthKey = "TS_AUTHKEY"
-	SecretNgrokAuthToken   = "NGROK_AUTHTOKEN"
+	SecretTailscaleAuthKey   = "TS_AUTHKEY"
+	SecretAgentMeshJoinToken = "AGENTMESH_JOIN_TOKEN"
+	SecretNgrokAuthToken     = "NGROK_AUTHTOKEN"
 )
 
 // setupNetwork creates the private and public providers from the config.
@@ -52,14 +54,35 @@ func (s *Server) setupNetwork(closers *stack) error {
 		}
 		return ts
 	}
+	var am *network.AgentMesh
+	agentmesh := func() *network.AgentMesh {
+		if am == nil {
+			am = &network.AgentMesh{
+				AgentName:       cfg.Name,
+				Description:     cfg.Description,
+				StateDir:        s.dir.AgentMeshDir(),
+				SocketPath:      s.dir.AgentMeshSocketPath(),
+				HubURL:          cfg.Network.AgentMeshHubURL,
+				JoinToken:       s.secrets[SecretAgentMeshJoinToken],
+				IngressAuthMode: cfg.Network.AgentMeshIngressAuth,
+				IngressAllow:    cfg.Network.AgentMeshIngressAllow,
+				Logf:            s.logf,
+			}
+		}
+		return am
+	}
 	switch cfg.Network.Private {
 	case "":
 	case ProviderTailscale:
 		s.private = tailscale()
+	case ProviderAgentMesh:
+		m := agentmesh()
+		m.Private = true
+		s.private = m
 	case ProviderLAN:
 		s.private = &network.LAN{AgentName: cfg.Name, Port: cfg.Network.LANPort}
 	default:
-		return fmt.Errorf("unknown private network %q: want tailscale or lan", cfg.Network.Private)
+		return fmt.Errorf("unknown private network %q: want tailscale, agentmesh or lan", cfg.Network.Private)
 	}
 	switch cfg.Network.Public {
 	case "":
@@ -67,10 +90,14 @@ func (s *Server) setupNetwork(closers *stack) error {
 		t := tailscale()
 		t.Funnel = true
 		s.public = t
+	case ProviderAgentMesh:
+		m := agentmesh()
+		m.Public = true
+		s.public = m
 	case ProviderNgrok:
 		s.public = &network.Ngrok{AuthToken: s.secrets[SecretNgrokAuthToken], URL: cfg.Network.NgrokURL, Description: "a2a server " + cfg.Name}
 	default:
-		return fmt.Errorf("unknown public network %q: want tailscale or ngrok", cfg.Network.Public)
+		return fmt.Errorf("unknown public network %q: want tailscale, agentmesh or ngrok", cfg.Network.Public)
 	}
 	if s.private != nil {
 		closers.push(func(context.Context) error { return s.private.Close() })

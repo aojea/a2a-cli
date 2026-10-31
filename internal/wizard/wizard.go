@@ -142,11 +142,23 @@ func Run(in io.Reader, out io.Writer, defaultName string, harnesses []string, ge
 		}
 	}
 
-	if s.Private, err = p.choose("Private network for your machines and team", []string{"none", "tailscale", "lan"}, "none"); err != nil {
+	if s.Private, err = p.choose("Private network for your machines and team", []string{"none", "tailscale", "agentmesh", "lan"}, "none"); err != nil {
 		return res, err
 	}
-	if s.Public, err = p.choose("Public URL on the internet", []string{"none", "tailscale", "ngrok"}, "none"); err != nil {
+	if s.Public, err = p.choose("Public URL on the internet", []string{"none", "tailscale", "agentmesh", "ngrok"}, "none"); err != nil {
 		return res, err
+	}
+	if s.Private == "agentmesh" || s.Public == "agentmesh" {
+		if s.AgentMeshHubURL, err = p.ask("Agent Mesh hub URL (such as https://hub.example.com)", getenv("AGENTMESH_HUB")); err != nil {
+			return res, err
+		}
+		defTok := ""
+		if getenv("AGENTMESH_JOIN_TOKEN") != "" {
+			defTok = "env:AGENTMESH_JOIN_TOKEN"
+		}
+		if s.AgentMeshJoinToken, err = p.ask("Agent Mesh join token (env:VAR, the token, or empty if already joined)", defTok); err != nil {
+			return res, err
+		}
 	}
 	if s.Public == "ngrok" {
 		def := ""

@@ -48,6 +48,15 @@ func TestRun(t *testing.T) {
 				NgrokAuthToken: "env:NGROK_AUTHTOKEN", Telegram: "env:BOT",
 			}},
 		},
+		{
+			name:  "agentmesh private and public",
+			input: "opencode\ncoder\n\nagentmesh\nagentmesh\nhttps://hub.example.com\nenv:AGENTMESH_JOIN_TOKEN\n\ndetach\n",
+			want: Result{Mode: ModeDetach, Settings: agentdir.Settings{
+				Harness: "opencode", Name: "coder", Secrets: []string{"OPENROUTER_API_KEY"},
+				Private: "agentmesh", Public: "agentmesh",
+				AgentMeshHubURL: "https://hub.example.com", AgentMeshJoinToken: "env:AGENTMESH_JOIN_TOKEN",
+			}},
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

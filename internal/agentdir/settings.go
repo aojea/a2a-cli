@@ -48,11 +48,15 @@ type Settings struct {
 	DenyTools  []string
 	Approvers  []string
 
-	TailscaleControlURL string
-	NgrokURL            string
-	// TailscaleAuthKey and NgrokAuthToken are env:VAR, secret:NAME or the value.
-	TailscaleAuthKey string
-	NgrokAuthToken   string
+	TailscaleControlURL   string
+	AgentMeshHubURL       string
+	AgentMeshIngressAuth  string
+	AgentMeshIngressAllow []string
+	NgrokURL              string
+	// TailscaleAuthKey, AgentMeshJoinToken and NgrokAuthToken are env:VAR, secret:NAME or the value.
+	TailscaleAuthKey   string
+	AgentMeshJoinToken string
+	NgrokAuthToken     string
 }
 
 // EmailSettings configure the email channel. Password is env:VAR,
@@ -69,11 +73,12 @@ type EmailSettings struct {
 
 // Secret names under which flag values are stored.
 const (
-	SecretTelegram      = "TELEGRAM_BOT_TOKEN"
-	SecretDiscord       = "DISCORD_BOT_TOKEN"
-	SecretEmailPassword = "EMAIL_PASSWORD"
-	SecretTailscaleKey  = "TS_AUTHKEY"
-	SecretNgrokToken    = "NGROK_AUTHTOKEN"
+	SecretTelegram       = "TELEGRAM_BOT_TOKEN"
+	SecretDiscord        = "DISCORD_BOT_TOKEN"
+	SecretEmailPassword  = "EMAIL_PASSWORD"
+	SecretTailscaleKey   = "TS_AUTHKEY"
+	SecretAgentMeshToken = "AGENTMESH_JOIN_TOKEN"
+	SecretNgrokToken     = "NGROK_AUTHTOKEN"
 )
 
 // Apply merges the settings into cfg and returns the secrets to store.
@@ -96,6 +101,18 @@ func (s Settings) Apply(cfg *Config, defaultName string) (Secrets, error) {
 	setNetwork(&cfg.Network.Private, s.Private)
 	setNetwork(&cfg.Network.Public, s.Public)
 	set(&cfg.Network.TailscaleControlURL, s.TailscaleControlURL)
+	set(&cfg.Network.AgentMeshHubURL, s.AgentMeshHubURL)
+	if s.AgentMeshIngressAuth != "" {
+		switch s.AgentMeshIngressAuth {
+		case "passthrough", "edge":
+			cfg.Network.AgentMeshIngressAuth = s.AgentMeshIngressAuth
+		default:
+			return nil, fmt.Errorf("--agentmesh-ingress-auth %q: want passthrough or edge", s.AgentMeshIngressAuth)
+		}
+	}
+	if len(s.AgentMeshIngressAllow) > 0 {
+		cfg.Network.AgentMeshIngressAllow = s.AgentMeshIngressAllow
+	}
 	set(&cfg.Network.NgrokURL, s.NgrokURL)
 	if len(s.Command) > 0 {
 		cfg.Command = s.Command
@@ -169,7 +186,11 @@ func (s Settings) Apply(cfg *Config, defaultName string) (Secrets, error) {
 		}
 	}
 	// Network providers read their secrets by well-known names.
-	for name, v := range map[string]string{SecretTailscaleKey: s.TailscaleAuthKey, SecretNgrokToken: s.NgrokAuthToken} {
+	for name, v := range map[string]string{
+		SecretTailscaleKey:   s.TailscaleAuthKey,
+		SecretAgentMeshToken: s.AgentMeshJoinToken,
+		SecretNgrokToken:     s.NgrokAuthToken,
+	} {
 		if v == "" {
 			continue
 		}

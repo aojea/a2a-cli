@@ -151,13 +151,13 @@ func (p *Peers) claimsOf(ctx context.Context, name string) (callClaims, bool) {
 	return callClaims{ContextID: h.ContextID, OnBehalfOf: h.OnBehalfOf, Hops: h.Hops}, true
 }
 
-// discover lists agents on the private network, cached briefly.
+// discover lists agents on the private network, cached briefly when non-empty.
 func (p *Peers) discover(ctx context.Context) ([]network.PeerInfo, error) {
 	if p.private == nil {
-		return nil, errors.New("this agent has no private network; start it with --private tailscale or --private lan")
+		return nil, errors.New("this agent has no private network; start it with --private tailscale, --private agentmesh or --private lan")
 	}
 	p.mu.Lock()
-	if time.Since(p.cachedAt) < 30*time.Second {
+	if len(p.cache) > 0 && time.Since(p.cachedAt) < 30*time.Second {
 		out := p.cache
 		p.mu.Unlock()
 		return out, nil
@@ -167,9 +167,11 @@ func (p *Peers) discover(ctx context.Context) ([]network.PeerInfo, error) {
 	if err != nil {
 		return nil, err
 	}
-	p.mu.Lock()
-	p.cache, p.cachedAt = peers, time.Now()
-	p.mu.Unlock()
+	if len(peers) > 0 {
+		p.mu.Lock()
+		p.cache, p.cachedAt = peers, time.Now()
+		p.mu.Unlock()
+	}
 	return peers, nil
 }
 

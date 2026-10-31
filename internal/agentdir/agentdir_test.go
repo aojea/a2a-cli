@@ -214,6 +214,29 @@ func TestSettingsApply(t *testing.T) {
 	if _, err := (Settings{}).Apply(&Config{}, "x"); err == nil {
 		t.Fatalf("Apply() without a harness error = nil, want error")
 	}
+	if _, err := (Settings{Harness: "opencode", AgentMeshIngressAuth: "bogus"}).Apply(&Config{}, "x"); err == nil {
+		t.Fatalf("Apply() with invalid AgentMeshIngressAuth error = nil, want error")
+	}
+
+	amCfg := &Config{}
+	t.Setenv("A2A_TEST_AM_TOKEN", "am-join-1")
+	amSec, err := Settings{
+		Harness:              "opencode",
+		Private:              "agentmesh",
+		Public:               "agentmesh",
+		AgentMeshHubURL:      "http://127.0.0.1:8443",
+		AgentMeshJoinToken:   "env:A2A_TEST_AM_TOKEN",
+		AgentMeshIngressAuth: "passthrough",
+	}.Apply(amCfg, "coder")
+	if err != nil {
+		t.Fatalf("Apply(agentmesh) error = %v", err)
+	}
+	if amCfg.Network.Private != "agentmesh" || amCfg.Network.Public != "agentmesh" || amCfg.Network.AgentMeshHubURL != "http://127.0.0.1:8443" {
+		t.Fatalf("Apply(agentmesh) network = %+v", amCfg.Network)
+	}
+	if got := amSec[SecretAgentMeshToken]; got != "am-join-1" {
+		t.Fatalf("Apply(agentmesh) secret = %q, want %q", got, "am-join-1")
+	}
 }
 
 func TestSettingsApplyNetworkSecrets(t *testing.T) {

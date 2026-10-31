@@ -20,6 +20,7 @@
 
 # GoReleaser build output
 dist/
+/bin/
 
 # Go workspace file
 go.work
