@@ -25,7 +25,8 @@ ACL edits, and no DNS propagation wait.
 To run the entire lesson end-to-end with real Docker-sandboxed `opencode`
 agents and live LLM inference (`opencode/big-pickle` by default, or pass
 `--model <provider/model>` with `OPENROUTER_API_KEY` / `OPENAI_API_KEY` /
-`ANTHROPIC_API_KEY` / `GEMINI_API_KEY` exported):
+`ANTHROPIC_API_KEY` / `GEMINI_API_KEY` exported, `--openai-base-url <url>`, or
+`--vertex-project <gcp-project>`):
 
 ```bash
 # Local loopback relay hub + real Docker opencode agents:
@@ -47,11 +48,47 @@ VM, or Cloud Run:
 
 ```bash
 mkdir -p ~/a2a-lesson7/hub
+cat > ~/a2a-lesson7/hub/policy.json <<'EOF'
+{
+  "roles": [
+    {
+      "name": "mesh-admin",
+      "allowed_services": ["*"],
+      "allowed_targets": ["*"],
+      "allowed_ingress": [{"services": ["*"]}]
+    },
+    {
+      "name": "mesh:role:router",
+      "allowed_services": ["*"],
+      "allowed_targets": ["*"]
+    },
+    {
+      "name": "mesh:role:node",
+      "allowed_services": ["*"],
+      "allowed_targets": ["*"],
+      "allowed_publish": ["*"],
+      "allowed_labels": ["*"],
+      "allowed_ingress": [
+        {
+          "services": ["a2a://*"],
+          "allowed_auth_modes": [
+            "INGRESS_AUTH_MODE_EDGE",
+            "INGRESS_AUTH_MODE_PASSTHROUGH"
+          ]
+        }
+      ]
+    }
+  ]
+}
+EOF
 agentmesh-one --bind-address 127.0.0.1 --port 8443 --data-dir ~/a2a-lesson7/hub \
+  --policy-file ~/a2a-lesson7/hub/policy.json \
   --tunnel cloudflare --tunnel-install --router-allow-loopback=false
 ```
 
-On first boot, `agentmesh-one` persists its join token in
+By default, `agentmesh-one` grants only zero-trust `INGRESS_AUTH_MODE_EDGE`;
+`policy.json` explicitly opts `mesh:role:node` into `INGRESS_AUTH_MODE_PASSTHROUGH`
+for `a2a://*` so `a2a-serve` pairing codes work across `/ingress/`. On first boot, `agentmesh-one` persists its join token in
 `~/a2a-lesson7/hub/join-token` and serves both the control plane, the WebSocket
 libp2p relay, and external HTTP ingress (`http://127.0.0.1:8443/ingress/...`)
 on a single port.
@@ -131,10 +168,11 @@ a2a pair add "$PUBLIC_URL" <CODE>
 a2a send -a "$PUBLIC_URL" "Ask reviewer to check the latest commit."
 ```
 
-For zero-trust federated callers that already hold an Agent Mesh delegated
-Biscuit or OIDC token, pass `--agentmesh-ingress-auth edge` (and optional
-`--agentmesh-ingress-allow <principal>`) so `agentmesh-router` and
-`agentmesh-node` enforce authorization at the mesh border without pairing codes:
+For zero-trust federated callers that hold an Agent Mesh delegated or
+task-attenuated Session Biscuit (minted via RFC 8693 `POST /oauth/token`), pass
+`--agentmesh-ingress-auth edge` (and optional `--agentmesh-ingress-allow <principal>`)
+so `agentmesh-router` and `agentmesh-node` enforce authorization at the mesh
+border without pairing codes:
 
 ```bash
 a2a send -a "$AUDITOR_PUBLIC_URL" --auth "Bearer $ATTENUATED_BISCUIT" "Run compliance check."

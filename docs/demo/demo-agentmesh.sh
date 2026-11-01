@@ -37,7 +37,11 @@ AGENTMESH_ONE_BIN="${AGENTMESH_ONE_BIN:-$(command -v agentmesh-one || true)}"
 AGENTMESH_NODE_BIN="${AGENTMESH_NODE_BIN:-$(command -v agentmesh-node || true)}"
 TUNNEL_PROVIDER="${TUNNEL_PROVIDER:-}"
 HARNESS_IMAGE="${HARNESS_IMAGE:-a2a-harness-opencode:local}"
-OPENCODE_MODEL="${OPENCODE_MODEL:-opencode/big-pickle}"
+OPENCODE_MODEL="${OPENCODE_MODEL:-}"
+OPENAI_BASE_URL="${OPENAI_BASE_URL:-}"
+VERTEX_PROJECT="${VERTEX_PROJECT:-}"
+VERTEX_LOCATION="${VERTEX_LOCATION:-us-central1}"
+GCLOUD_CONFIG="${GCLOUD_CONFIG:-}"
 export A2ACLI_TIMEOUT="${A2ACLI_TIMEOUT:-3m}"
 
 while [[ $# -gt 0 ]]; do
@@ -62,6 +66,22 @@ while [[ $# -gt 0 ]]; do
       OPENCODE_MODEL="$2"
       shift 2
       ;;
+    --openai-base-url)
+      OPENAI_BASE_URL="$2"
+      shift 2
+      ;;
+    --vertex-project)
+      VERTEX_PROJECT="$2"
+      shift 2
+      ;;
+    --vertex-location)
+      VERTEX_LOCATION="$2"
+      shift 2
+      ;;
+    --gcloud-config)
+      GCLOUD_CONFIG="$2"
+      shift 2
+      ;;
     *)
       echo "error: unknown argument: $1" >&2
       exit 1
@@ -69,6 +89,18 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 export AGENTMESH_NODE_BIN
+
+if [[ -n "$VERTEX_PROJECT" ]]; then
+  OPENAI_BASE_URL="https://${VERTEX_LOCATION}-aiplatform.googleapis.com/v1/projects/${VERTEX_PROJECT}/locations/${VERTEX_LOCATION}/endpoints/openapi"
+  OPENCODE_MODEL="${OPENCODE_MODEL:-google/gemini-2.5-flash}"
+  GCLOUD_ARGS=()
+  if [[ -n "$GCLOUD_CONFIG" ]]; then
+    GCLOUD_ARGS+=(--configuration "$GCLOUD_CONFIG")
+  fi
+  OPENAI_API_KEY="$(gcloud "${GCLOUD_ARGS[@]}" auth application-default print-access-token 2>/dev/null || gcloud "${GCLOUD_ARGS[@]}" auth print-access-token)"
+  export OPENAI_API_KEY
+fi
+OPENCODE_MODEL="${OPENCODE_MODEL:-opencode/big-pickle}"
 
 if [[ ! -x "$A2A_BIN" ]]; then
   echo "Building static a2a CLI (CGO_ENABLED=0 for container bind-mount compatibility)..."
@@ -146,6 +178,10 @@ cleanup() {
         fi
       done
     done
+    for cname in $(docker ps -a --filter "label=a2a.agent" --format '{{.Names}}' 2>/dev/null || true); do
+      echo "--- docker logs $cname ---" >&2
+      docker logs --tail 40 "$cname" >&2 || true
+    done
   fi
   for d in "$WORK/coder" "$WORK/reviewer" "$WORK/auditor"; do
     if [[ -d "$d/.a2a" ]]; then
@@ -177,18 +213,38 @@ You are reached over A2A. Keep answers to one short sentence and always repeat a
 EOF
   python3 -c '
 import json, os, sys
-path, model = sys.argv[1], sys.argv[2]
+path, model, base_url = sys.argv[1], sys.argv[2], sys.argv[3]
 cfg = {
     "$schema": "https://opencode.ai/config.json",
     "autoupdate": False,
     "model": model,
     "permission": {"bash": "ask", "edit": "ask", "webfetch": "ask"},
 }
+if base_url:
+    model_id = model.removeprefix("custom-openai/")
+    cfg["model"] = f"custom-openai/{model_id}"
+    cfg["small_model"] = f"custom-openai/{model_id}"
+    cfg["provider"] = {
+        "custom-openai": {
+            "npm": "@ai-sdk/openai-compatible",
+            "name": "OpenAI-Compatible Endpoint",
+            "options": {
+                "baseURL": base_url,
+                "apiKey": "{env:OPENAI_API_KEY}",
+            },
+            "models": {
+                model_id: {
+                    "name": model_id,
+                    "tool_call": True,
+                }
+            },
+        }
+    }
 with open(path, "w", encoding="utf-8") as f:
     json.dump(cfg, f, indent=2)
     f.write("\n")
 os.chmod(path, 0o600)
-' "$dir/.a2a/state/home/.config/opencode/opencode.json" "$OPENCODE_MODEL"
+' "$dir/.a2a/state/home/.config/opencode/opencode.json" "$OPENCODE_MODEL" "$OPENAI_BASE_URL"
 }
 
 REVIEW_TOKEN="MESH-REVIEW-$(python3 -c 'import secrets; print(secrets.token_hex(6))')"
@@ -204,6 +260,43 @@ printf 'External ingress verification token: %s\n' "$EXT_TOKEN" >"$WORK/reviewer
 printf 'Compliance audit token: %s\n' "$AUDIT_TOKEN" >"$WORK/auditor/AUDIT.txt"
 
 HUB_PORT="$(pick_free_port)"
+cat >"$WORK/hub/policy.json" <<'EOF'
+{
+  "roles": [
+    {
+      "name": "mesh-admin",
+      "allowed_services": ["*"],
+      "allowed_targets": ["*"],
+      "allowed_ingress": [{"services": ["*"]}]
+    },
+    {
+      "name": "mesh:role:router",
+      "allowed_services": ["*"],
+      "allowed_targets": ["*"]
+    },
+    {
+      "name": "mesh:role:node",
+      "allowed_services": ["*"],
+      "allowed_targets": ["*"],
+      "allowed_publish": ["*"],
+      "allowed_labels": ["*"],
+      "allowed_ingress": [
+        {
+          "services": ["*"],
+          "allowed_auth_modes": ["INGRESS_AUTH_MODE_EDGE"]
+        },
+        {
+          "services": ["a2a://*"],
+          "allowed_auth_modes": [
+            "INGRESS_AUTH_MODE_EDGE",
+            "INGRESS_AUTH_MODE_PASSTHROUGH"
+          ]
+        }
+      ]
+    }
+  ]
+}
+EOF
 if [[ -n "$TUNNEL_PROVIDER" ]]; then
   TUNNEL_CACHE_DIR="${TMPDIR:-/tmp}/a2a-am-tunnel-cache"
   mkdir -p "$TUNNEL_CACHE_DIR" "$WORK/hub/bin"
@@ -215,6 +308,7 @@ if [[ -n "$TUNNEL_PROVIDER" ]]; then
     --bind-address 127.0.0.1 \
     --port "$HUB_PORT" \
     --data-dir "$WORK/hub" \
+    --policy-file "$WORK/hub/policy.json" \
     --tunnel "$TUNNEL_PROVIDER" \
     --tunnel-install \
     --router-allow-loopback=false \
@@ -255,6 +349,7 @@ else
     --bind-address 127.0.0.1 \
     --port "$HUB_PORT" \
     --data-dir "$WORK/hub" \
+    --policy-file "$WORK/hub/policy.json" \
     >"$WORK/hub/agentmesh-one.log" 2>&1 &
   HUB_PID=$!
 
@@ -327,7 +422,7 @@ REVIEWER_CODE="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["code"]
 
 echo "Expected secret inside reviewer container NOTE.txt: ${REVIEW_TOKEN}"
 DELEGATED_REPLY="$("$A2A_BIN" send -a "$CODER_LOCAL" \
-  "Ask the reviewer agent synchronously (without --async) to read NOTE.txt in its workspace and return the exact token inside, then reply with that exact token.")"
+  "Ask the reviewer agent synchronously (without --async) to read ./NOTE.txt in its current working directory and return the exact token inside, then reply with that exact token.")"
 echo "coder reply: $DELEGATED_REPLY"
 grep -Fq "$REVIEW_TOKEN" <<<"$DELEGATED_REPLY"
 
@@ -351,7 +446,7 @@ EXT_CODE="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["code"])' <<
 HOME="$EXTERNAL_HOME" "$A2A_BIN" pair add "$CODER_PUBLIC" "$EXT_CODE"
 echo "Expected secret inside reviewer container PUBLIC_CHECK.txt: ${EXT_TOKEN}"
 EXT_REPLY="$(HOME="$EXTERNAL_HOME" "$A2A_BIN" send -a "$CODER_PUBLIC" \
-  "Ask the reviewer agent synchronously (without --async) to read PUBLIC_CHECK.txt in its workspace and return the exact token inside, then reply with that exact token.")"
+  "Ask the reviewer agent synchronously (without --async) to read ./PUBLIC_CHECK.txt in its current working directory and return the exact token inside, then reply with that exact token.")"
 echo "public ingress -> coder -> reviewer reply: $EXT_REPLY"
 grep -Fq "$EXT_TOKEN" <<<"$EXT_REPLY"
 
@@ -419,7 +514,7 @@ EDGE_BISCUIT="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["access_
 
 echo "Expected secret inside auditor container AUDIT.txt: ${AUDIT_TOKEN}"
 EDGE_REPLY="$(HOME="$EXTERNAL_HOME" "$A2A_BIN" send -a "$AUDITOR_PUBLIC" --auth "Bearer ${EDGE_BISCUIT}" \
-  "Read AUDIT.txt in your workspace and reply with the exact token inside.")"
+  "Read ./AUDIT.txt in your current working directory and reply with the exact token inside.")"
 echo "auditor reply: $EDGE_REPLY"
 grep -Fq "$AUDIT_TOKEN" <<<"$EDGE_REPLY"
 
