@@ -61,7 +61,6 @@ func (s *Server) setupNetwork(closers *stack) error {
 				AgentName:       cfg.Name,
 				Description:     cfg.Description,
 				StateDir:        s.dir.AgentMeshDir(),
-				SocketPath:      s.dir.AgentMeshSocketPath(),
 				HubURL:          cfg.Network.AgentMeshHubURL,
 				JoinToken:       s.secrets[SecretAgentMeshJoinToken],
 				IngressAuthMode: cfg.Network.AgentMeshIngressAuth,

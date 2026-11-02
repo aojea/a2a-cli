@@ -123,6 +123,7 @@ git finds a repository, or take --dir.
 		newServerPeersCmd(cfg, &f),
 		newServerContactCmd(cfg, &f),
 		newServerChannelCmd(cfg, &f),
+		newServerMeshTokenCmd(cfg, &f),
 	)
 	return cmd
 }

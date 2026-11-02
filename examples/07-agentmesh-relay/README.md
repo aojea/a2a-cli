@@ -2,9 +2,10 @@
 
 Lesson 6 put an agent on a tailnet and published it with Tailscale Funnel.
 This lesson runs the exact same workflow on [Agent Mesh](https://github.com/google/agentmesh)
-using `agentmesh-one` as a self-hosted or Cloud Run relay hub and
-`agentmesh-node` as the companion connector — no Tailscale account, no Funnel
-ACL edits, and no DNS propagation wait.
+using `agentmesh-one` as a self-hosted or Cloud Run relay hub and the embedded
+Go SDK (`github.com/google/agentmesh/sdk/meshnet`) directly inside `a2a` — no
+`agentmesh-node` sidecar binary, no Tailscale account, no Funnel ACL edits, and
+no DNS propagation wait.
 
 ## What you'll learn
 
@@ -20,7 +21,7 @@ ACL edits, and no DNS propagation wait.
 
 - `a2a` built statically from this branch (`CGO_ENABLED=0 go build -trimpath -o ./bin/a2a .`)
 - Docker running locally (for `opencode` container sandboxes)
-- `agentmesh-one` and `agentmesh-node` on `PATH`
+- `agentmesh-one` on `PATH`
 
 To run the entire lesson end-to-end with real Docker-sandboxed `opencode`
 agents and live LLM inference (`opencode/big-pickle` by default, or pass
@@ -31,14 +32,12 @@ agents and live LLM inference (`opencode/big-pickle` by default, or pass
 ```bash
 # Local loopback relay hub + real Docker opencode agents:
 bash docs/demo/demo-agentmesh.sh \
-  --agentmesh-one-bin /path/to/agentmesh-one \
-  --agentmesh-node-bin /path/to/agentmesh-node
+  --agentmesh-one-bin /path/to/agentmesh-one
 
 # Full internet E2E over a live public HTTPS Cloudflare Quick Tunnel (*.trycloudflare.com):
 bash docs/demo/demo-agentmesh.sh \
   --tunnel cloudflare \
-  --agentmesh-one-bin /path/to/agentmesh-one \
-  --agentmesh-node-bin /path/to/agentmesh-node
+  --agentmesh-one-bin /path/to/agentmesh-one
 ```
 
 ## 1. Start the relay hub (`agentmesh-one`)
@@ -146,9 +145,9 @@ CODE="$(a2a --output json server --dir ~/a2a-lesson7/reviewer pair invite coder 
 a2a server --dir ~/a2a-lesson7/coder contact add reviewer --code "$CODE"
 ```
 
-When `coder` calls `reviewer`, `a2a server` routes the request through its
-local `agentmesh-node` Unix socket over end-to-end encrypted libp2p streams;
-no credentials enter `coder`'s sandbox.
+When `coder` calls `reviewer`, `a2a server` routes the request in-process
+through its embedded `sdk/meshnet` `HTTPClient` over end-to-end encrypted libp2p
+streams; no credentials enter `coder`'s sandbox.
 
 ## 4. Call the agent from outside the mesh
 
@@ -169,11 +168,13 @@ a2a send -a "$PUBLIC_URL" "Ask reviewer to check the latest commit."
 ```
 
 For zero-trust federated callers that hold an Agent Mesh delegated or
-task-attenuated Session Biscuit (minted via RFC 8693 `POST /oauth/token`), pass
-`--agentmesh-ingress-auth edge` (and optional `--agentmesh-ingress-allow <principal>`)
-so `agentmesh-router` and `agentmesh-node` enforce authorization at the mesh
-border without pairing codes:
+task-attenuated Session Biscuit (minted in memory via `a2a server mesh-token`
+or via RFC 8693 `POST /oauth/token`), pass `--agentmesh-ingress-auth edge`
+(and optional `--agentmesh-ingress-allow <principal>`) so `agentmesh-router`
+and the embedded `sdk/meshnet` PEP enforce authorization at the mesh border
+without pairing codes:
 
 ```bash
+ATTENUATED_BISCUIT="$(a2a server --dir ~/a2a-lesson7/coder mesh-token --resource a2a://auditor)"
 a2a send -a "$AUDITOR_PUBLIC_URL" --auth "Bearer $ATTENUATED_BISCUIT" "Run compliance check."
 ```

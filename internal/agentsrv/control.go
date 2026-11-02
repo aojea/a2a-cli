@@ -35,6 +35,7 @@ import (
 	"github.com/a2aproject/a2a-cli/internal/controlapi"
 	"github.com/a2aproject/a2a-cli/internal/fsutil"
 	"github.com/a2aproject/a2a-cli/internal/jsonhttp"
+	"github.com/a2aproject/a2a-cli/internal/network"
 	"github.com/a2aproject/a2a-cli/internal/pairapi"
 	"github.com/a2aproject/a2a-cli/internal/store"
 )
@@ -78,6 +79,7 @@ func (s *Server) serveControl(ctx context.Context, closers *stack, errc chan<- e
 	mux.HandleFunc("POST /channels", s.ctlAddChannel)
 	mux.HandleFunc("DELETE /channels/{kind}", s.ctlDeleteChannel)
 	mux.HandleFunc("GET /nodes", s.ctlNodes)
+	mux.HandleFunc("POST /mesh-token", s.ctlMeshToken)
 	srv := &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second, BaseContext: func(net.Listener) context.Context { return ctx }}
 	closers.push(func(ctx context.Context) error {
 		err := srv.Shutdown(ctx)
@@ -374,4 +376,25 @@ func (s *Server) ctlNodes(w http.ResponseWriter, r *http.Request) {
 		out = append(out, s.nodes.Info(n))
 	}
 	jsonhttp.Write(w, http.StatusOK, out)
+}
+
+func (s *Server) ctlMeshToken(w http.ResponseWriter, r *http.Request) {
+	var req controlapi.MeshTokenRequest
+	if !jsonhttp.Read(w, r, &req) {
+		return
+	}
+	am, ok := s.private.(*network.AgentMesh)
+	if !ok {
+		am, ok = s.public.(*network.AgentMesh)
+	}
+	if !ok || am == nil {
+		jsonhttp.Error(w, http.StatusBadRequest, "this agent is not connected to Agent Mesh (start with --private agentmesh or --public agentmesh)")
+		return
+	}
+	tok, exp, err := am.AttenuateToken(req.Resources, req.Scope, req.TTL)
+	if err != nil {
+		jsonhttp.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	jsonhttp.Write(w, http.StatusOK, controlapi.MeshTokenResponse{Token: tok, Expires: exp})
 }

@@ -153,6 +153,20 @@ type NodeInfo struct {
 	Created time.Time `json:"created"`
 }
 
+// MeshTokenRequest asks the running agent to attenuate a task-scoped Agent Mesh
+// Biscuit from its in-memory meshnet credential.
+type MeshTokenRequest struct {
+	Resources []string      `json:"resources,omitempty"`
+	Scope     string        `json:"scope,omitempty"`
+	TTL       time.Duration `json:"ttl,omitempty"`
+}
+
+// MeshTokenResponse carries a sealed task-attenuated Agent Mesh Biscuit.
+type MeshTokenResponse struct {
+	Token   string    `json:"token"`
+	Expires time.Time `json:"expires"`
+}
+
 // PairCommand is the command a caller or a node runs to pair with code.
 func PairCommand(agentURL, code string) string {
 	return fmt.Sprintf("a2a pair add %s %s", agentURL, code)
@@ -308,4 +322,10 @@ func (c *Client) DeleteChannel(ctx context.Context, kind string) error {
 func (c *Client) Nodes(ctx context.Context) ([]NodeInfo, error) {
 	var out []NodeInfo
 	return out, c.do(ctx, http.MethodGet, "/nodes", nil, &out)
+}
+
+// MeshToken attenuates a sealed task-scoped Agent Mesh Biscuit in memory.
+func (c *Client) MeshToken(ctx context.Context, req MeshTokenRequest) (*MeshTokenResponse, error) {
+	var out MeshTokenResponse
+	return &out, c.do(ctx, http.MethodPost, "/mesh-token", req, &out)
 }

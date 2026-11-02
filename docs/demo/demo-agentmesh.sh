@@ -1,14 +1,16 @@
 #!/usr/bin/env bash
 #
 # End-to-end proof of `a2a server opencode` running real Docker-sandboxed coding
-# agents backed by a live LLM on Agent Mesh (`agentmesh-one` + `agentmesh-node`)
+# agents backed by a live LLM on Agent Mesh (`agentmesh-one` + embedded Go SDK
+# `github.com/google/agentmesh/sdk/meshnet`, no `agentmesh-node` sidecar)
 # instead of Tailscale (`tsnet` + Funnel):
 #
 #   1. Starts `agentmesh-one` as a single-binary relay + control-plane hub
 #      (optionally exposed to the public internet via `--tunnel cloudflare`).
 #   2. Starts two real Docker-sandboxed `a2a server opencode` agents (`coder`
-#      and `reviewer`) with `--private agentmesh --public agentmesh` and
-#      isolated per-agent workspaces holding unforgeable random tokens.
+#      and `reviewer`) with `--private agentmesh --public agentmesh` (joining
+#      the mesh in-process via `sdk/meshnet`) and isolated per-agent workspaces
+#      holding unforgeable random tokens.
 #   3. Discovers `reviewer` from `coder` over the mesh DHT (`a2a server peers`),
 #      pairs them (`a2a server contact add`), and asks `coder` in natural
 #      language to inspect `reviewer`'s private `NOTE.txt` over authenticated
@@ -18,14 +20,14 @@
 #      after pairing (`a2a pair add`), triggering a two-hop live delegation
 #      (`internet -> agentmesh-router -> coder -> reviewer`).
 #   5. Starts a third Docker-sandboxed `a2a server opencode` agent (`auditor`)
-#      with `--agentmesh-ingress-auth edge`, proves wrong-audience Biscuits are
-#      rejected with `403`, and reads `auditor`'s `AUDIT.txt` over its public
-#      `/ingress/` URL using an RFC 8693 task-attenuated Biscuit (`a2a://auditor`).
+#      with `--agentmesh-ingress-auth edge`, mints sealed task-attenuated
+#      Biscuits in memory (`a2a server mesh-token`), proves wrong-audience
+#      Biscuits (`a2a://coder`) are rejected with `403`, and reads `auditor`'s
+#      `AUDIT.txt` over its public `/ingress/` URL (`a2a://auditor`).
 #
 # Usage:
 #   AGENTMESH_ONE_BIN=/path/to/agentmesh-one \
-#   AGENTMESH_NODE_BIN=/path/to/agentmesh-node \
-#   bash docs/demo/demo-agentmesh.sh [--tunnel cloudflare] [--model opencode/big-pickle]
+#   bash docs/demo/demo-agentmesh.sh [--tunnel cloudflare] [--vertex-project <gcp-project>]
 
 set -euo pipefail
 
@@ -34,7 +36,6 @@ cd "$REPO_ROOT"
 
 A2A_BIN="${A2A_BIN:-$REPO_ROOT/bin/a2a}"
 AGENTMESH_ONE_BIN="${AGENTMESH_ONE_BIN:-$(command -v agentmesh-one || true)}"
-AGENTMESH_NODE_BIN="${AGENTMESH_NODE_BIN:-$(command -v agentmesh-node || true)}"
 TUNNEL_PROVIDER="${TUNNEL_PROVIDER:-}"
 HARNESS_IMAGE="${HARNESS_IMAGE:-a2a-harness-opencode:local}"
 OPENCODE_MODEL="${OPENCODE_MODEL:-}"
@@ -51,7 +52,7 @@ while [[ $# -gt 0 ]]; do
       shift 2
       ;;
     --agentmesh-node-bin)
-      AGENTMESH_NODE_BIN="$2"
+      # Retained as a deprecated no-op flag: a2a now embeds sdk/meshnet in-process.
       shift 2
       ;;
     --tunnel)
@@ -88,7 +89,6 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
-export AGENTMESH_NODE_BIN
 
 if [[ -n "$VERTEX_PROJECT" ]]; then
   OPENAI_BASE_URL="https://${VERTEX_LOCATION}-aiplatform.googleapis.com/v1/projects/${VERTEX_PROJECT}/locations/${VERTEX_LOCATION}/endpoints/openapi"
@@ -103,16 +103,12 @@ fi
 OPENCODE_MODEL="${OPENCODE_MODEL:-opencode/big-pickle}"
 
 if [[ ! -x "$A2A_BIN" ]]; then
-  echo "Building static a2a CLI (CGO_ENABLED=0 for container bind-mount compatibility)..."
+  echo "Building static a2a CLI with embedded sdk/meshnet (CGO_ENABLED=0)..."
   mkdir -p "$REPO_ROOT/bin"
   CGO_ENABLED=0 go build -trimpath -o "$A2A_BIN" .
 fi
 if [[ -z "$AGENTMESH_ONE_BIN" || ! -x "$AGENTMESH_ONE_BIN" ]]; then
   echo "error: set AGENTMESH_ONE_BIN to the agentmesh-one binary" >&2
-  exit 1
-fi
-if [[ -z "$AGENTMESH_NODE_BIN" || ! -x "$AGENTMESH_NODE_BIN" ]]; then
-  echo "error: set AGENTMESH_NODE_BIN to the agentmesh-node binary" >&2
   exit 1
 fi
 if ! docker info >/dev/null 2>&1; then
@@ -200,10 +196,6 @@ banner() {
   printf '\n\033[1;36m==> %s\033[0m\n' "$*"
 }
 
-pick_free_port() {
-  python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()'
-}
-
 prepare_agent_workspace() {
   local dir="$1"
   mkdir -p "$dir/.a2a/state/home/.config/opencode"
@@ -259,7 +251,6 @@ printf 'Internal review token: %s\n' "$REVIEW_TOKEN" >"$WORK/reviewer/NOTE.txt"
 printf 'External ingress verification token: %s\n' "$EXT_TOKEN" >"$WORK/reviewer/PUBLIC_CHECK.txt"
 printf 'Compliance audit token: %s\n' "$AUDIT_TOKEN" >"$WORK/auditor/AUDIT.txt"
 
-HUB_PORT="$(pick_free_port)"
 cat >"$WORK/hub/policy.json" <<'EOF'
 {
   "roles": [
@@ -306,7 +297,7 @@ if [[ -n "$TUNNEL_PROVIDER" ]]; then
   banner "1. Starting agentmesh-one relay hub with public --tunnel ${TUNNEL_PROVIDER} (no Tailscale)"
   "$AGENTMESH_ONE_BIN" \
     --bind-address 127.0.0.1 \
-    --port "$HUB_PORT" \
+    --port 0 \
     --data-dir "$WORK/hub" \
     --policy-file "$WORK/hub/policy.json" \
     --tunnel "$TUNNEL_PROVIDER" \
@@ -343,22 +334,33 @@ if [[ -n "$TUNNEL_PROVIDER" ]]; then
     sleep 0.5
   done
 else
-  HUB_URL="http://127.0.0.1:${HUB_PORT}"
-  banner "1. Starting agentmesh-one relay hub at ${HUB_URL} (no Tailscale)"
+  banner "1. Starting agentmesh-one relay hub on loopback (no Tailscale)"
   "$AGENTMESH_ONE_BIN" \
     --bind-address 127.0.0.1 \
-    --port "$HUB_PORT" \
+    --port 0 \
     --data-dir "$WORK/hub" \
     --policy-file "$WORK/hub/policy.json" \
     >"$WORK/hub/agentmesh-one.log" 2>&1 &
   HUB_PID=$!
 
+  HUB_URL=""
   for _ in $(seq 1 100); do
-    if curl -fsS "${HUB_URL}/readyz" >/dev/null 2>&1 && [[ -s "$WORK/hub/join-token" ]]; then
+    if ! kill -0 "$HUB_PID" 2>/dev/null; then
+      echo "error: agentmesh-one exited unexpectedly" >&2
+      exit 1
+    fi
+    if [[ -f "$WORK/hub/agentmesh-one.log" ]]; then
+      HUB_URL="$(sed -n 's/^API URL:[[:space:]]*\(https\{0,1\}:\/\/[^[:space:]]*\).*/\1/p' "$WORK/hub/agentmesh-one.log" | head -n1)"
+    fi
+    if [[ -n "$HUB_URL" && -s "$WORK/hub/join-token" ]] && curl -fsS "${HUB_URL}/readyz" >/dev/null 2>&1; then
       break
     fi
     sleep 0.1
   done
+  if [[ -z "$HUB_URL" ]]; then
+    echo "error: timed out waiting for agentmesh-one API URL" >&2
+    exit 1
+  fi
 fi
 curl -fsS "${HUB_URL}/readyz" >/dev/null
 export AGENTMESH_JOIN_TOKEN="$(tr -d '[:space:]' <"$WORK/hub/join-token")"
@@ -395,6 +397,8 @@ echo "--- coder status ---"
 "$A2A_BIN" server --dir "$WORK/coder" status
 echo "--- reviewer status ---"
 "$A2A_BIN" server --dir "$WORK/reviewer" status
+echo "--- in-process sdk/meshnet state files (no agentmesh-node sidecar) ---"
+ls -1 "$WORK/coder/.a2a/state/agentmesh"
 echo "--- running Docker sandboxes ---"
 docker ps --filter "label=a2a.agent" --format "table {{.Names}}\t{{.Image}}\t{{.Status}}"
 
@@ -477,40 +481,17 @@ for _ in $(seq 1 30); do
   sleep 0.5
 done
 
-# Mint an RFC 8693 task-attenuated Biscuit from coder's local agentmesh-node socket
-# scoped strictly to `a2a://auditor`, then call auditor's public /ingress/ URL
-# from outside the mesh with zero pairing codes!
-CODER_SOCK="$(python3 -c '
-import hashlib, os, sys
-coder_dir = os.path.abspath(os.path.join(sys.argv[1], "coder"))
-direct = os.path.join(coder_dir, ".a2a/state/agentmesh/agentmesh-node.sock")
-if len(direct) <= 100 and os.path.exists(direct):
-    print(direct)
-else:
-    uid = os.getuid()
-    base = os.environ.get("XDG_RUNTIME_DIR") or f"/tmp/a2a-{uid}"
-    digest = hashlib.sha256(coder_dir.encode()).hexdigest()[:10]
-    print(os.path.join(base, f"a2a-{digest}-am.sock"))
-' "$WORK")"
-
-WRONG_SCOPE_JSON="$(curl -fsS --unix-socket "$CODER_SOCK" \
-  -X POST http://localhost/oauth/token \
-  -H 'Content-Type: application/x-www-form-urlencoded' \
-  --data-urlencode 'grant_type=urn:ietf:params:oauth:grant-type:token-exchange' \
-  --data-urlencode 'resource=a2a://coder')"
-WRONG_BISCUIT="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["access_token"])' <<<"$WRONG_SCOPE_JSON")"
+# Mint a sealed task-attenuated Biscuit in memory from coder's embedded
+# sdk/meshnet Server scoped strictly to `a2a://auditor`, then call auditor's
+# public /ingress/ URL from outside the mesh with zero pairing codes!
+WRONG_BISCUIT="$("$A2A_BIN" server --dir "$WORK/coder" mesh-token --resource a2a://coder)"
 if HOME="$EXTERNAL_HOME" "$A2A_BIN" send -a "$AUDITOR_PUBLIC" --auth "Bearer ${WRONG_BISCUIT}" "Read AUDIT.txt" >/dev/null 2>&1; then
   echo "error: Biscuit attenuated to a2a://coder unexpectedly reached a2a://auditor" >&2
   exit 1
 fi
 echo "Task-attenuated Biscuit for a2a://coder rightly refused on a2a://auditor (403)."
 
-TOKEN_JSON="$(curl -fsS --unix-socket "$CODER_SOCK" \
-  -X POST http://localhost/oauth/token \
-  -H 'Content-Type: application/x-www-form-urlencoded' \
-  --data-urlencode 'grant_type=urn:ietf:params:oauth:grant-type:token-exchange' \
-  --data-urlencode 'resource=a2a://auditor')"
-EDGE_BISCUIT="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["access_token"])' <<<"$TOKEN_JSON")"
+EDGE_BISCUIT="$("$A2A_BIN" server --dir "$WORK/coder" mesh-token --resource a2a://auditor)"
 
 echo "Expected secret inside auditor container AUDIT.txt: ${AUDIT_TOKEN}"
 EDGE_REPLY="$(HOME="$EXTERNAL_HOME" "$A2A_BIN" send -a "$AUDITOR_PUBLIC" --auth "Bearer ${EDGE_BISCUIT}" \

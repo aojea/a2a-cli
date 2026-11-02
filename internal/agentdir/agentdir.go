@@ -135,21 +135,6 @@ func (d Dir) HarnessSocketDir() string {
 	return filepath.Join(base, "a2a-"+d.ID()+"-harness")
 }
 
-// AgentMeshSocketPath returns the Unix socket path of the companion
-// agentmesh-node process, falling back to the runtime directory when the state
-// directory path exceeds the OS sun_path limit.
-func (d Dir) AgentMeshSocketPath() string {
-	p := filepath.Join(d.AgentMeshDir(), "agentmesh-node.sock")
-	if len(p) <= maxSocketPath {
-		return p
-	}
-	base := os.Getenv("XDG_RUNTIME_DIR")
-	if base == "" {
-		base = filepath.Join(os.TempDir(), fmt.Sprintf("a2a-%d", os.Getuid()))
-	}
-	return filepath.Join(base, "a2a-"+d.ID()+"-am.sock")
-}
-
 // ID is a short stable identifier of the agent directory, used in container
 // and service names.
 func (d Dir) ID() string {
