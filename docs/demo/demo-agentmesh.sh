@@ -108,9 +108,9 @@ if [[ ! -x "$A2A_BIN" ]]; then
   CGO_ENABLED=0 go build -trimpath -o "$A2A_BIN" .
 fi
 if [[ ! -x "$AGENTMESH_ONE_BIN" ]]; then
-  echo "Installing static agentmesh-one (github.com/google/agentmesh/cmd/agentmesh-one@main)..."
+  echo "Installing static agentmesh-one (github.com/google/agentmesh/cmd/agentmesh-one@v0.2.0)..."
   mkdir -p "$(dirname "$AGENTMESH_ONE_BIN")"
-  GOBIN="$(cd "$(dirname "$AGENTMESH_ONE_BIN")" && pwd)" CGO_ENABLED=0 go install -trimpath github.com/google/agentmesh/cmd/agentmesh-one@main
+  GOBIN="$(cd "$(dirname "$AGENTMESH_ONE_BIN")" && pwd)" CGO_ENABLED=0 go install -trimpath github.com/google/agentmesh/cmd/agentmesh-one@v0.2.0
 fi
 if ! docker info >/dev/null 2>&1; then
   echo "error: Docker daemon is not reachable (required for real Docker-sandboxed opencode agents)" >&2
