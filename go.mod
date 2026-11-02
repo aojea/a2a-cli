@@ -9,7 +9,7 @@ require (
 	github.com/emersion/go-imap/v2 v2.0.0-beta.8
 	github.com/emersion/go-message v0.18.2
 	github.com/go-telegram/bot v1.27.0
-	github.com/google/agentmesh v0.0.0-00010101000000-000000000000
+	github.com/google/agentmesh v0.1.2-0.20261102110647-667077f27adc
 	github.com/google/go-cmp v0.7.0
 	github.com/google/shlex v0.0.0-20191202100458-e7afc7fbc510
 	github.com/hashicorp/mdns v1.0.7
@@ -184,7 +184,3 @@ require (
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.12.1 // indirect
 )
-
-// Local checkout of PR #843 (sdk/meshnet); drop this replace once #843 merges
-// into github.com/google/agentmesh main (`go get github.com/google/agentmesh@main`).
-replace github.com/google/agentmesh => /usr/local/google/home/aojea/src/sam/.worktrees/go-sdk-meshnet

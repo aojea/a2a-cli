@@ -192,7 +192,6 @@ func TestAgentMeshSplitAndWhoIs(t *testing.T) {
 		var once sync.Once
 		hc := &http.Client{
 			Transport: &http.Transport{
-				DisableKeepAlives: true,
 				DialContext: func(context.Context, string, string) (net.Conn, error) {
 					var c net.Conn
 					once.Do(func() { c = clientSide })
@@ -203,6 +202,7 @@ func TestAgentMeshSplitAndWhoIs(t *testing.T) {
 				},
 			},
 		}
+		defer hc.CloseIdleConnections()
 		req, rErr := http.NewRequest(http.MethodPost, "http://agentmesh.local/", strings.NewReader("{}"))
 		if rErr != nil {
 			t.Fatal(rErr)

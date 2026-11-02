@@ -35,7 +35,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$REPO_ROOT"
 
 A2A_BIN="${A2A_BIN:-$REPO_ROOT/bin/a2a}"
-AGENTMESH_ONE_BIN="${AGENTMESH_ONE_BIN:-$(command -v agentmesh-one || true)}"
+AGENTMESH_ONE_BIN="${AGENTMESH_ONE_BIN:-$(command -v agentmesh-one || echo "$REPO_ROOT/bin/agentmesh-one")}"
 TUNNEL_PROVIDER="${TUNNEL_PROVIDER:-}"
 HARNESS_IMAGE="${HARNESS_IMAGE:-a2a-harness-opencode:local}"
 OPENCODE_MODEL="${OPENCODE_MODEL:-}"
@@ -107,9 +107,10 @@ if [[ ! -x "$A2A_BIN" ]]; then
   mkdir -p "$REPO_ROOT/bin"
   CGO_ENABLED=0 go build -trimpath -o "$A2A_BIN" .
 fi
-if [[ -z "$AGENTMESH_ONE_BIN" || ! -x "$AGENTMESH_ONE_BIN" ]]; then
-  echo "error: set AGENTMESH_ONE_BIN to the agentmesh-one binary" >&2
-  exit 1
+if [[ ! -x "$AGENTMESH_ONE_BIN" ]]; then
+  echo "Installing static agentmesh-one (github.com/google/agentmesh/cmd/agentmesh-one@main)..."
+  mkdir -p "$(dirname "$AGENTMESH_ONE_BIN")"
+  GOBIN="$(cd "$(dirname "$AGENTMESH_ONE_BIN")" && pwd)" CGO_ENABLED=0 go install -trimpath github.com/google/agentmesh/cmd/agentmesh-one@main
 fi
 if ! docker info >/dev/null 2>&1; then
   echo "error: Docker daemon is not reachable (required for real Docker-sandboxed opencode agents)" >&2
@@ -200,8 +201,8 @@ prepare_agent_workspace() {
   local dir="$1"
   mkdir -p "$dir/.a2a/state/home/.config/opencode"
   chmod 700 "$dir/.a2a" "$dir/.a2a/state" "$dir/.a2a/state/home" "$dir/.a2a/state/home/.config" "$dir/.a2a/state/home/.config/opencode"
-  cat >"$dir/AGENTS.md" <<'EOF'
-You are reached over A2A. Keep answers to one short sentence and always repeat any requested token or identifier verbatim.
+  cat >"$dir/AGENTS.md" <<EOF
+Your workspace directory is ${dir}. You are reached over A2A. Keep answers to one short sentence, always repeat any requested token or identifier verbatim, and always read workspace files under ${dir}/ (for example ${dir}/NOTE.txt, never /NOTE.txt).
 EOF
   python3 -c '
 import json, os, sys
@@ -426,7 +427,7 @@ REVIEWER_CODE="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["code"]
 
 echo "Expected secret inside reviewer container NOTE.txt: ${REVIEW_TOKEN}"
 DELEGATED_REPLY="$("$A2A_BIN" send -a "$CODER_LOCAL" \
-  "Ask the reviewer agent synchronously (without --async) to read ./NOTE.txt in its current working directory and return the exact token inside, then reply with that exact token.")"
+  "Ask the reviewer agent synchronously (without --async) to read NOTE.txt in its current working directory and return the exact token inside, then reply with that exact token.")"
 echo "coder reply: $DELEGATED_REPLY"
 grep -Fq "$REVIEW_TOKEN" <<<"$DELEGATED_REPLY"
 
@@ -450,7 +451,7 @@ EXT_CODE="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["code"])' <<
 HOME="$EXTERNAL_HOME" "$A2A_BIN" pair add "$CODER_PUBLIC" "$EXT_CODE"
 echo "Expected secret inside reviewer container PUBLIC_CHECK.txt: ${EXT_TOKEN}"
 EXT_REPLY="$(HOME="$EXTERNAL_HOME" "$A2A_BIN" send -a "$CODER_PUBLIC" \
-  "Ask the reviewer agent synchronously (without --async) to read ./PUBLIC_CHECK.txt in its current working directory and return the exact token inside, then reply with that exact token.")"
+  "Ask the reviewer agent synchronously (without --async) to read PUBLIC_CHECK.txt in its current working directory and return the exact token inside, then reply with that exact token.")"
 echo "public ingress -> coder -> reviewer reply: $EXT_REPLY"
 grep -Fq "$EXT_TOKEN" <<<"$EXT_REPLY"
 
@@ -495,7 +496,7 @@ EDGE_BISCUIT="$("$A2A_BIN" server --dir "$WORK/coder" mesh-token --resource a2a:
 
 echo "Expected secret inside auditor container AUDIT.txt: ${AUDIT_TOKEN}"
 EDGE_REPLY="$(HOME="$EXTERNAL_HOME" "$A2A_BIN" send -a "$AUDITOR_PUBLIC" --auth "Bearer ${EDGE_BISCUIT}" \
-  "Read ./AUDIT.txt in your current working directory and reply with the exact token inside.")"
+  "Read AUDIT.txt in your current working directory and reply with the exact token inside.")"
 echo "auditor reply: $EDGE_REPLY"
 grep -Fq "$AUDIT_TOKEN" <<<"$EDGE_REPLY"
 
